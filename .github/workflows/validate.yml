@@ -1,0 +1,55 @@
+name: Validate OI Dashboard
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Syntax check all Python files
+      run: |
+        python -m py_compile app.py
+        python -m py_compile utils/data_fetcher.py
+        python -m py_compile utils/chart_theme.py
+        python -m py_compile utils/market_utils.py
+        python -m py_compile pages/oi_stats.py
+        python -m py_compile pages/pe_ce_diff.py
+        python -m py_compile pages/oi_heatmap.py
+        python -m py_compile pages/spike_detection.py
+        python -m py_compile pages/oi_table_page.py
+        echo "✅ All files pass syntax check"
+
+    - name: Test imports
+      run: |
+        python -c "
+        import sys
+        sys.path.insert(0, '.')
+        from utils.data_fetcher import _simulate_option_chain, compute_max_pain, compute_pcr
+        from utils.market_utils import is_market_open, get_market_status
+        from utils.chart_theme import base_layout, dual_axis_layout
+        data = _simulate_option_chain('NIFTY')
+        assert data['simulated'] == True
+        assert len(data['df']) > 0
+        assert data['spot'] > 0
+        mp = compute_max_pain(data['df'])
+        assert mp > 0
+        pcr = compute_pcr(data['df'])
+        assert pcr > 0
+        print('✅ All imports and basic logic pass')
+        "
