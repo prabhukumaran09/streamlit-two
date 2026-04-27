@@ -111,11 +111,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-import importlib, sys, os
+import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from pages import oi_stats, pe_ce_diff, oi_heatmap, spike_detection, oi_table_page
 from utils.data_fetcher import get_nse_session
+from utils.market_utils import is_market_open, get_market_status
 import time
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -154,7 +155,6 @@ with st.sidebar:
         st.rerun()
 
     # Market status
-    from utils.market_utils import is_market_open, get_market_status
     status, color = get_market_status()
     st.markdown(f"""
     <div style="text-align:center;margin-top:8px">
@@ -219,5 +219,7 @@ with tab5:
 
 # ── Auto-refresh ──────────────────────────────────────────────────────────────
 if auto_refresh and is_market_open():
-    time.sleep(refresh_interval)
-    st.rerun()
+    st.markdown(
+        f'<meta http-equiv="refresh" content="{refresh_interval}">',
+        unsafe_allow_html=True
+    )
