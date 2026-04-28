@@ -37,9 +37,9 @@ def get_nse_session():
     try:
         session = requests.Session()
         session.headers.update(NSE_HEADERS)
-        resp = session.get(SESSION_URL, timeout=10)
+        resp = session.get(SESSION_URL, timeout=5)
         resp.raise_for_status()
-        time.sleep(1)
+        time.sleep(0.5)
         return session
     except Exception as e:
         return None
@@ -54,13 +54,15 @@ def fetch_option_chain(symbol: str, symbol_type: str) -> dict:
             return _simulate_option_chain(symbol)
 
         url = OC_INDEX_URL.format(symbol) if symbol_type == "Index" else OC_EQUITY_URL.format(symbol)
-        resp = session.get(url, timeout=15)
+        resp = session.get(url, timeout=8)
 
         if resp.status_code == 401:
-            # Re-initialize session
-            st.cache_resource.clear()
+            # Re-initialize session by clearing cache and retrying
+            get_nse_session.clear()
             session = get_nse_session()
-            resp = session.get(url, timeout=15)
+            if session is None:
+                return _simulate_option_chain(symbol)
+            resp = session.get(url, timeout=8)
 
         resp.raise_for_status()
         raw = resp.json()

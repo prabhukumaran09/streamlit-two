@@ -72,7 +72,9 @@ def render(symbol: str, symbol_type: str, expiry: str):
         pe_chg_color = "green" if row["pe_pct"] >= 0 else "red"
         pcr_color = "green" if row["pcr"] >= 1 else "red"
 
-        iv_cols = f"""<td>{row['ce_iv']:.1f}%</td><td>{row['pe_iv']:.1f}%</td>""" if show_iv else ""
+        ce_iv_td = f"<td>{row['ce_iv']:.1f}%</td>" if show_iv else ""
+        pe_iv_td = f"<td>{row['pe_iv']:.1f}%</td>" if show_iv else ""
+        strike_color = '#d29922' if row['is_atm'] else '#58a6ff'
 
         rows_html += f"""
         <tr class="{atm_class}">
@@ -80,11 +82,11 @@ def render(symbol: str, symbol_type: str, expiry: str):
             <td class="{ce_chg_color}">{row['ce_pct']:+.1f}%</td>
             <td>{int(row['ce_coi']/1000):.0f}K</td>
             <td>₹{row['ce_ltp']:.1f}</td>
-            {"<td>"+str(row['ce_iv'])+"</td>" if show_iv else ""}
-            <td style="font-weight:700;text-align:center;color:{'#d29922' if row['is_atm'] else '#58a6ff'}">
+            {ce_iv_td}
+            <td style="font-weight:700;text-align:center;color:{strike_color}">
                 {int(row['strike'])}{mp_marker}{"★" if row['is_atm'] else ""}
             </td>
-            {"<td>"+str(row['pe_iv'])+"</td>" if show_iv else ""}
+            {pe_iv_td}
             <td>₹{row['pe_ltp']:.1f}</td>
             <td>{int(row['pe_coi']/1000):.0f}K</td>
             <td class="{pe_chg_color}">{row['pe_pct']:+.1f}%</td>
@@ -93,7 +95,9 @@ def render(symbol: str, symbol_type: str, expiry: str):
         </tr>
         """
 
-    iv_headers = "<th>CE IV</th><th>PE IV</th>" if show_iv else ""
+    iv_header_ce = "<th colspan='1' style='background:#0f2318;color:#3fb950'>IV</th>" if show_iv else ""
+    iv_header_pe = "<th colspan='1' style='background:#2a1f1f;color:#f85149'>IV</th>" if show_iv else ""
+    iv_col_header = "<th>IV</th>" if show_iv else ""
 
     table_html = f"""
     <style>
@@ -112,17 +116,17 @@ def render(symbol: str, symbol_type: str, expiry: str):
     <table class="oi-table">
     <thead><tr>
         <th colspan="4" style="background:#0f2318;color:#3fb950">— CALLS (CE) —</th>
-        {"<th colspan='1' style='background:#0f2318;color:#3fb950'>IV</th>" if show_iv else ""}
+        {iv_header_ce}
         <th style="background:#21262d;color:#d29922">STRIKE</th>
-        {"<th colspan='1' style='background:#2a1f1f;color:#f85149'>IV</th>" if show_iv else ""}
+        {iv_header_pe}
         <th colspan="4" style="background:#2a1f1f;color:#f85149">— PUTS (PE) —</th>
         <th style="background:#21262d;color:#8b949e">PCR</th>
     </tr>
     <tr>
         <th>OI</th><th>%Chg</th><th>OI Chg</th><th>LTP</th>
-        {"<th>IV</th>" if show_iv else ""}
+        {iv_col_header}
         <th>Strike</th>
-        {"<th>IV</th>" if show_iv else ""}
+        {iv_col_header}
         <th>LTP</th><th>OI Chg</th><th>%Chg</th><th>OI</th>
         <th>PCR</th>
     </tr></thead>
