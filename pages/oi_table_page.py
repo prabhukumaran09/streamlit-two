@@ -26,7 +26,8 @@ def render(symbol: str, symbol_type: str, expiry: str):
     simulated = data["simulated"]
 
     if simulated:
-        st.caption("⚠️ Simulated data — real NSE API unavailable right now.")
+        reason = data.get("sim_reason", "NSE API unavailable")
+        st.warning(f"⚠️ **Simulated data** — Real NSE data could not be fetched. Reason: `{reason}`")
 
     # Compute derived columns
     df["pcr"] = (df["pe_oi"] / df["ce_oi"].replace(0, 1)).round(2)

@@ -22,7 +22,8 @@ def render(symbol: str, symbol_type: str, expiry: str, candle_size: int):
     simulated = data["simulated"]
 
     if simulated:
-        st.caption("⚠️ Showing simulated data — NSE API unavailable outside market hours or connection issue.")
+        reason = data.get("sim_reason", "NSE API unavailable")
+        st.warning(f"⚠️ **Simulated data** — Real NSE data could not be fetched. Reason: `{reason}`")
 
     # ── KPI Row ───────────────────────────────────────────────────────────────
     total_ce_oi = df["ce_oi"].sum()

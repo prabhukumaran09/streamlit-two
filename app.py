@@ -153,6 +153,9 @@ with st.sidebar:
     if st.button("🔄 Refresh Now", use_container_width=True):
         st.cache_data.clear()
         st.cache_resource.clear()
+        # Also force a fresh NSE session on next fetch
+        st.session_state.pop("_nse_session", None)
+        st.session_state.pop("_nse_session_ts", None)
         st.rerun()
 
     # Market status
@@ -169,6 +172,20 @@ with st.sidebar:
         <span style="font-size:11px;color:#484f58">{time.strftime('%d-%b-%Y %H:%M:%S')}</span>
     </div>
     """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # NSE connection status
+    nse_sess = st.session_state.get("_nse_session")
+    nse_err = st.session_state.get("_nse_session_error")
+    if nse_sess is not None:
+        st.markdown('<div style="font-size:11px;color:#3fb950;text-align:center">🟢 NSE Session Active</div>', unsafe_allow_html=True)
+    elif nse_err:
+        st.markdown(f'<div style="font-size:11px;color:#f85149;text-align:center">🔴 NSE Error</div>', unsafe_allow_html=True)
+        with st.expander("Error details", expanded=False):
+            st.code(nse_err, language=None)
+    else:
+        st.markdown('<div style="font-size:11px;color:#d29922;text-align:center">🟡 NSE Session Pending</div>', unsafe_allow_html=True)
 
 # ── Store in session state ────────────────────────────────────────────────────
 st.session_state["symbol"] = symbol

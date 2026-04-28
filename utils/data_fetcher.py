@@ -2,6 +2,14 @@
 NSE Option Chain Data Fetcher
 Pulls real data from NSE India public API.
 Falls back to simulated data during non-market hours or on error.
+
+FIX NOTES:
+- Added robust cookie + header flow matching browser behavior
+- Session stored in st.session_state (not cache_resource) to survive reruns
+  without the 5-min stale-lock that caused silent fallback to dummy data
+- All simulated-data paths now expose a sim_reason field
+- Session is rebuilt every 4 min (NSE cookies expire ~5 min)
+- Added a one-time retry on 401/403 before falling back
 """
 
 import requests
@@ -17,60 +25,98 @@ NSE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "*/*",
+    "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.nseindia.com/option-chain",
+    "Origin": "https://www.nseindia.com",
     "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "X-Requested-With": "XMLHttpRequest",
 }
 
-SESSION_URL = "https://www.nseindia.com"
+SESSION_URL = "https://www.nseindia.com/option-chain"
 OC_INDEX_URL = "https://www.nseindia.com/api/option-chain-indices?symbol={}"
 OC_EQUITY_URL = "https://www.nseindia.com/api/option-chain-equities?symbol={}"
 
+_COOKIE_WARM_DELAY = 1.5   # seconds between homepage hit and API call
 
-@st.cache_resource(ttl=300)
-def get_nse_session():
-    """Create and cache an NSE session with proper cookies."""
+
+def _build_fresh_session():
+    """
+    Open the NSE option-chain page to collect cookies, return the session.
+    Returns None if unreachable.
+    """
     try:
         session = requests.Session()
         session.headers.update(NSE_HEADERS)
-        resp = session.get(SESSION_URL, timeout=5)
+        # Step 1: hit the main page to get initial cookies
+        resp = session.get(SESSION_URL, timeout=10)
         resp.raise_for_status()
-        time.sleep(0.5)
+        time.sleep(_COOKIE_WARM_DELAY)
         return session
     except Exception as e:
+        st.session_state["_nse_session_error"] = str(e)
         return None
+
+
+def _get_session():
+    """
+    Return a live NSE session from st.session_state (persists across reruns).
+    Creates a new one if missing or older than 4 minutes.
+    """
+    sess = st.session_state.get("_nse_session")
+    created_at = st.session_state.get("_nse_session_ts", 0)
+    # Refresh session every 4 minutes (NSE cookies expire ~5 min)
+    if sess is None or (time.time() - created_at) > 240:
+        sess = _build_fresh_session()
+        st.session_state["_nse_session"] = sess
+        st.session_state["_nse_session_ts"] = time.time()
+        st.session_state.pop("_nse_session_error", None)
+    return sess
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_option_chain(symbol: str, symbol_type: str) -> dict:
-    """Fetch option chain from NSE. Returns parsed dict or simulated data."""
+    """
+    Fetch option chain from NSE.
+    Returns parsed dict; sets result['simulated']=True if real data unavailable.
+    """
+    session = _get_session()
+    if session is None:
+        return _simulate_option_chain(symbol, reason="NSE session could not be created — check network")
+
+    url = OC_INDEX_URL.format(symbol) if symbol_type == "Index" else OC_EQUITY_URL.format(symbol)
+
     try:
-        session = get_nse_session()
-        if session is None:
-            return _simulate_option_chain(symbol)
+        resp = session.get(url, timeout=10)
 
-        url = OC_INDEX_URL.format(symbol) if symbol_type == "Index" else OC_EQUITY_URL.format(symbol)
-        resp = session.get(url, timeout=8)
-
-        if resp.status_code == 401:
-            # Re-initialize session by clearing cache and retrying
-            get_nse_session.clear()
-            session = get_nse_session()
+        # NSE returns 401/403 when cookies are stale — rebuild and retry once
+        if resp.status_code in (401, 403):
+            st.session_state.pop("_nse_session", None)
+            session = _get_session()
             if session is None:
-                return _simulate_option_chain(symbol)
-            resp = session.get(url, timeout=8)
+                return _simulate_option_chain(symbol, reason=f"HTTP {resp.status_code} and session rebuild failed")
+            resp = session.get(url, timeout=10)
 
         resp.raise_for_status()
         raw = resp.json()
+
+        if "records" not in raw:
+            return _simulate_option_chain(symbol, reason="Unexpected response format from NSE")
+
         return _parse_option_chain(raw, symbol)
 
+    except requests.exceptions.Timeout:
+        return _simulate_option_chain(symbol, reason="NSE API timed out (10s)")
+    except requests.exceptions.ConnectionError:
+        return _simulate_option_chain(symbol, reason="Cannot reach NSE — network or firewall block")
     except Exception as e:
-        # Silently fall back to simulation — real data unavailable
-        return _simulate_option_chain(symbol)
+        return _simulate_option_chain(symbol, reason=str(e))
 
 
 def _parse_option_chain(raw: dict, symbol: str) -> dict:
@@ -113,10 +159,11 @@ def _parse_option_chain(raw: dict, symbol: str) -> dict:
         "symbol": symbol,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
         "simulated": False,
+        "sim_reason": None,
     }
 
 
-def _simulate_option_chain(symbol: str) -> dict:
+def _simulate_option_chain(symbol: str, reason: str = "non-market hours") -> dict:
     """Generate realistic simulated option chain data for demo/non-market hours."""
     spot_prices = {
         "NIFTY": 22400, "BANKNIFTY": 48200, "FINNIFTY": 23800,
@@ -130,7 +177,6 @@ def _simulate_option_chain(symbol: str) -> dict:
     }
     spot = spot_prices.get(symbol, 1000)
 
-    # Determine step size
     if symbol in ("NIFTY", "FINNIFTY", "MIDCPNIFTY"):
         step = 50
     elif symbol == "BANKNIFTY":
@@ -147,23 +193,20 @@ def _simulate_option_chain(symbol: str) -> dict:
     atm = round(spot / step) * step
     strikes = [atm + i * step for i in range(-12, 13)]
 
-    np.random.seed(int(time.time() / 300))  # Stable for 5 min windows
+    np.random.seed(int(time.time() / 300))  # Stable for 5-min windows
 
     rows = []
     for s in strikes:
         dist = (s - atm) / step
-        # OI distribution: higher near ATM, decaying away
         ce_base = max(10, 200 * np.exp(-0.08 * max(dist, 0) ** 2) + np.random.normal(0, 20))
         pe_base = max(10, 200 * np.exp(-0.08 * max(-dist, 0) ** 2) + np.random.normal(0, 20))
 
-        # OTM strikes have more OI (selling pressure)
         ce_oi = abs(ce_base * (1.5 if dist > 2 else 1.0)) * 1000
         pe_oi = abs(pe_base * (1.5 if dist < -2 else 1.0)) * 1000
 
         ce_coi = np.random.normal(ce_oi * 0.05, ce_oi * 0.03)
         pe_coi = np.random.normal(pe_oi * 0.03, pe_oi * 0.04)
 
-        # LTP from Black-Scholes approximation
         ce_ltp = max(0.5, spot - s + max(0, spot * 0.015 - abs(dist) * step * 0.3))
         pe_ltp = max(0.5, s - spot + max(0, spot * 0.015 - abs(dist) * step * 0.3))
 
@@ -188,10 +231,9 @@ def _simulate_option_chain(symbol: str) -> dict:
 
     df = pd.DataFrame(rows)
 
-    # Generate fake expiry dates
     from datetime import timedelta
     today = date.today()
-    # Next few Thursdays
+
     def next_thursday(d, weeks=0):
         days_ahead = 3 - d.weekday()
         if days_ahead <= 0:
@@ -212,14 +254,16 @@ def _simulate_option_chain(symbol: str) -> dict:
         "symbol": symbol,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
         "simulated": True,
+        "sim_reason": reason,
     }
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_intraday_oi_history(symbol: str, candle_size: int = 15) -> pd.DataFrame:
     """
-    Generate intraday OI history (time-series) for buildup/unwinding charts.
-    In production: replace with your own stored snapshots from DB.
+    Intraday OI history for buildup/unwinding charts.
+    NOTE: Always simulated — NSE does not expose an intraday OI history API.
+    Replace with your own DB snapshots in production.
     """
     ist = pytz.timezone("Asia/Kolkata")
     now = datetime.now(ist)
@@ -245,19 +289,16 @@ def get_intraday_oi_history(symbol: str, candle_size: int = 15) -> pd.DataFrame:
     n = len(times)
     np.random.seed(42)
 
-    # Simulate cumulative buildup / unwinding with drift
     ce_buildup = np.cumsum(np.random.normal(3000, 8000, n))
     pe_buildup = np.cumsum(np.random.normal(5000, 7000, n))
     ce_unwind = np.cumsum(np.random.normal(-2000, 6000, n))
     pe_unwind = np.cumsum(np.random.normal(-3000, 5000, n))
 
-    spot_prices = {
-        "NIFTY": 22400, "BANKNIFTY": 48200, "FINNIFTY": 23800,
-    }
+    spot_prices = {"NIFTY": 22400, "BANKNIFTY": 48200, "FINNIFTY": 23800}
     base_spot = spot_prices.get(symbol, 22400)
     fair_price = base_spot + np.cumsum(np.random.normal(0, 20, n))
 
-    df = pd.DataFrame({
+    return pd.DataFrame({
         "time": times,
         "ce_buildup": ce_buildup,
         "pe_buildup": pe_buildup,
@@ -265,20 +306,18 @@ def get_intraday_oi_history(symbol: str, candle_size: int = 15) -> pd.DataFrame:
         "pe_unwind": pe_unwind,
         "fair_price": fair_price,
     })
-    return df
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_oi_snapshots_history(symbol: str, candle_size: int = 15) -> pd.DataFrame:
-    """
-    Returns historical OI snapshots per strike × time slot.
-    Used for heatmap rendering.
-    """
-    data = fetch_option_chain(symbol, "Index" if symbol in ("NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY") else "Stock")
+    """OI snapshots per strike × time — used for heatmap rendering."""
+    data = fetch_option_chain(
+        symbol,
+        "Index" if symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY") else "Stock"
+    )
     df = data["df"]
     spot = data["spot"]
 
-    # Filter ATM ±10 strikes
     strikes = sorted(df["strike"].unique())
     step = strikes[1] - strikes[0] if len(strikes) > 1 else 50
     atm = round(spot / step) * step
@@ -301,9 +340,10 @@ def get_oi_snapshots_history(symbol: str, candle_size: int = 15) -> pd.DataFrame
     rows = []
     np.random.seed(int(time.time() / 300))
     for strike in near_strikes:
-        row = df[df["strike"] == strike].iloc[0] if len(df[df["strike"] == strike]) > 0 else {}
-        base_ce = row.get("ce_oi", 50000) if hasattr(row, "get") else 50000
-        base_pe = row.get("pe_oi", 50000) if hasattr(row, "get") else 50000
+        row_mask = df["strike"] == strike
+        row = df[row_mask].iloc[0] if row_mask.any() else None
+        base_ce = int(row["ce_oi"]) if row is not None else 50000
+        base_pe = int(row["pe_oi"]) if row is not None else 50000
         for t_str in times:
             noise_ce = np.random.uniform(0.7, 1.4)
             noise_pe = np.random.uniform(0.7, 1.4)
