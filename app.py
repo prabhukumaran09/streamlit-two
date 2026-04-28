@@ -115,7 +115,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from pages import oi_stats, pe_ce_diff, oi_heatmap, spike_detection, oi_table_page
-from utils.data_fetcher import get_nse_session
+from utils.data_fetcher import fetch_option_chain
 from utils.market_utils import is_market_open, get_market_status
 import time
 
