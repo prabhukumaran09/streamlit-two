@@ -15,6 +15,7 @@ import pandas as pd
 import numpy as np
 from utils.data_fetcher import fetch_option_chain, get_intraday_oi_history
 from utils.chart_theme import *
+from utils.chart_theme import show_sim_banner
 
 
 def render(symbol: str, symbol_type: str, expiry: str, candle_size: int):
@@ -25,7 +26,7 @@ def render(symbol: str, symbol_type: str, expiry: str, candle_size: int):
 
     if simulated:
         reason = data.get("sim_reason", "NSE API unavailable")
-        st.warning(f"⚠️ **Simulated data** — Real NSE data could not be fetched. Reason: `{reason}`")
+        show_sim_banner(reason)
 
     # Sub-tabs matching iCharts
     sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Stats", "OI Diff", "%OI Chg"])

@@ -80,3 +80,15 @@ def add_fair_price_line(fig, x, y, name="Fair Price", yaxis="y"):
         yaxis=yaxis,
         hovertemplate=f"{name}: %{{y:,.0f}}<extra></extra>",
     ))
+
+
+def show_sim_banner(reason: str):
+    """Shared banner shown when NSE real data is unavailable."""
+    import streamlit as st
+    st.warning(
+        f"⚠️ **Simulated data** — NSE data could not be fetched from this server.  \n"
+        f"**Reason:** `{reason}`  \n"
+        f"**Fix:** Run locally with `streamlit run app.py`, or deploy a self-hosted NSE proxy.  \n"
+        f"NSE blocks all major cloud provider IPs (AWS/GCP/Azure/Streamlit Cloud) by default.",
+        icon="🚫",
+    )

@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from utils.data_fetcher import fetch_option_chain, compute_max_pain, compute_pcr
 from utils.chart_theme import *
+from utils.chart_theme import show_sim_banner
 import plotly.graph_objects as go
 
 
@@ -27,7 +28,7 @@ def render(symbol: str, symbol_type: str, expiry: str):
 
     if simulated:
         reason = data.get("sim_reason", "NSE API unavailable")
-        st.warning(f"⚠️ **Simulated data** — Real NSE data could not be fetched. Reason: `{reason}`")
+        show_sim_banner(reason)
 
     # Compute derived columns
     df["pcr"] = (df["pe_oi"] / df["ce_oi"].replace(0, 1)).round(2)
